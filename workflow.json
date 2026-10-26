@@ -1,0 +1,908 @@
+{
+  "name": "Content Digest",
+  "nodes": [
+    {
+      "id": "n-webhook",
+      "name": "Webhook",
+      "webhookId": "5d0c3a52-7f0e-4c1e-9a43-2b6f8e1d4c70",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        304
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-digest",
+        "responseMode": "responseNode",
+        "options": {},
+        "authentication": "headerAuth"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Content Digest webhook secret"
+        }
+      }
+    },
+    {
+      "id": "n-classify",
+      "name": "Classify URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ],
+      "parameters": {
+        "jsCode": "// Validate the submitted URL and decide which extraction branch handles it.\n// (The Code-node sandbox has no global URL class, so parse with a regex.)\nconst body = $input.first().json.body ?? {};\nconst raw = typeof body.url === 'string' ? body.url.trim() : '';\n\nconst m = raw.match(/^https?:\\/\\/([^\\/?#\\s]+)([^?#\\s]*)\\S*$/i);\nconst host = m ? m[1].split('@').pop().split(':')[0].toLowerCase().replace(/^(www|m|mobile)\\./, '') : '';\nif (!m || !/^[a-z0-9-]+(\\.[a-z0-9-]+)+$/.test(host)) {\n  return [{ json: { route: 'invalid', httpStatus: 400, message: 'Please provide a valid http(s) URL in the \"url\" field.' } }];\n}\nconst path = m[2] || '/';\nconst is = (...domains) => domains.some(d => host === d || host.endsWith('.' + d));\n\nlet platform = 'article';\nif (is('youtube.com', 'youtu.be', 'youtube-nocookie.com')) platform = 'youtube';\nelse if (is('instagram.com')) platform = 'instagram';\nelse if (is('facebook.com', 'fb.watch', 'fb.com')) platform = 'facebook';\nelse if (is('tiktok.com')) platform = 'tiktok';\nelse if (is('x.com', 'twitter.com')) platform = 'x';\nelse if (/\\.(mp3|m4a|wav|ogg|oga|flac|aac|opus|mp4|webm)$/i.test(path)) platform = 'media';\n\nconst route = platform === 'article' ? 'article' : platform === 'media' ? 'media' : 'video';\nreturn [{ json: { route, platform, sourceUrl: raw } }];"
+      }
+    },
+    {
+      "id": "n-route",
+      "name": "Route by Source",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        304
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r-invalid",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "invalid"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "invalid"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r-video",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "video"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "video"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r-media",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "media"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "media"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r-article",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "article"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "article"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-supadata",
+      "name": "Supadata Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "position": [
+        704,
+        144
+      ],
+      "parameters": {
+        "url": "https://api.supadata.ai/v1/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.sourceUrl }}"
+            },
+            {
+              "name": "text",
+              "value": "true"
+            },
+            {
+              "name": "mode",
+              "value": "auto"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 90000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "id": "n-parse-supadata",
+      "name": "Parse Supadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        144
+      ],
+      "parameters": {
+        "jsCode": "// Handles both the first transcript call and each job-status poll.\nconst MAX_POLLS = 24; // ~2 minutes at 5s per poll\nconst ctx = $('Classify URL').first().json;\nconst res = $input.first().json;\nconst base = { sourceUrl: ctx.sourceUrl, platform: ctx.platform, method: 'transcript', title: '', pending: false };\nconst fail = (httpStatus, message) => [{ json: { ...base, ok: false, httpStatus, message } }];\n\nif (res.error && res.statusCode === undefined) {\n  return fail(502, 'Could not reach the transcript service. Please try again.');\n}\n\nconst status = res.statusCode ?? 0;\nconst body = res.body && typeof res.body === 'object' ? res.body : {};\n\n// Async job started (long videos) or still running\nlet jobId = body.jobId;\nif (!jobId && ['queued', 'active'].includes(body.status)) {\n  try { jobId = $('Wait 5s').itemMatching(0).json.jobId; } catch (e) { jobId = undefined; }\n}\nif (jobId && (status === 202 || ['queued', 'active'].includes(body.status) || !body.status)) {\n  if ($runIndex >= MAX_POLLS) return fail(504, 'Transcription is taking too long. Try a shorter video.');\n  return [{ json: { ...base, pending: true, jobId } }];\n}\n\nif (body.status === 'failed') {\n  return fail(422, body.error?.message || body.error || 'The transcript job failed for this video.');\n}\n\nif (status === 200 && body.content) {\n  const text = Array.isArray(body.content) ? body.content.map(c => c.text).join(' ') : String(body.content);\n  return [{ json: { ...base, ok: true, text, language: body.lang || '' } }];\n}\n\nif (status === 206) return fail(422, 'No transcript is available for this video.');\nif (status === 401 || status === 403) return fail(502, 'The transcript service rejected our API key. Check the Supadata credential in n8n.');\nif (status === 429) return fail(429, 'Transcript service rate limit reached. Please wait a moment and try again.');\nif (status === 404) return fail(404, 'That video could not be found. It may be private or deleted.');\nreturn fail(502, body.message || body.error || `Transcript service error (HTTP ${status}).`);"
+      }
+    },
+    {
+      "id": "n-pending",
+      "name": "Job Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1152,
+        144
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-pending",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.pending }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-wait",
+      "name": "Wait 5s",
+      "webhookId": "8b7e2f61-3c4d-4a9b-b1e2-7a3c9d5e1f02",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1360,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n-job",
+      "name": "Supadata Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "position": [
+        1584,
+        0
+      ],
+      "parameters": {
+        "url": "=https://api.supadata.ai/v1/transcript/{{ $json.jobId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "id": "n-gemini-transcribe",
+      "name": "Gemini Transcribe",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "position": [
+        704,
+        320
+      ],
+      "parameters": {
+        "resource": "audio",
+        "modelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "models/gemini-3.6-flash"
+        },
+        "audioUrls": "={{ $json.sourceUrl }}",
+        "options": {}
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "n-parse-gemini",
+      "name": "Parse Transcription",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const ctx = $('Classify URL').first().json;\nconst j = $input.first().json;\nconst base = { sourceUrl: ctx.sourceUrl, platform: ctx.platform, method: 'transcript', title: '', pending: false };\n\nif (j.error) {\n  return [{ json: { ...base, ok: false, httpStatus: 502, message: 'Could not transcribe that audio file. Make sure the link is a public, direct audio/video file.' } }];\n}\n\nconst parts = j.content?.parts ?? j.candidates?.[0]?.content?.parts ?? [];\nconst text = typeof j.text === 'string' ? j.text : parts.map(p => p.text ?? '').join('\\n');\nreturn [{ json: { ...base, ok: true, text } }];"
+      }
+    },
+    {
+      "id": "n-jina",
+      "name": "Jina Reader",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "position": [
+        704,
+        512
+      ],
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.sourceUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Retain-Images",
+              "value": "none"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "n-parse-article",
+      "name": "Parse Article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        512
+      ],
+      "parameters": {
+        "jsCode": "const ctx = $('Classify URL').first().json;\nconst res = $input.first().json;\nconst base = { sourceUrl: ctx.sourceUrl, platform: ctx.platform, method: 'article', title: '', pending: false };\nconst fail = (httpStatus, message) => [{ json: { ...base, ok: false, httpStatus, message } }];\n\nif (res.error && res.statusCode === undefined) return fail(502, 'Could not reach the page reader. Please try again.');\n\nconst status = res.statusCode ?? 0;\nconst body = res.body;\nif (status === 429) return fail(429, 'The page reader is rate limited. Please wait a moment and try again.');\nif (status < 200 || status >= 300) return fail(422, `Couldn't read that page (HTTP ${status}). It may block automated readers or require a login.`);\n\nconst data = body && typeof body === 'object' ? (body.data ?? body) : { content: String(body ?? '') };\nreturn [{ json: { ...base, ok: true, title: data.title || '', text: data.content || '' } }];"
+      }
+    },
+    {
+      "id": "n-check",
+      "name": "Check Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Shared by every branch: reject empty extractions, trim very long text for the LLM.\nconst MAX_CHARS = 120000;\nconst MIN_CHARS = 80;\nconst item = $input.first().json;\nif (item.ok === false) return [{ json: item }];\n\nconst text = String(item.text ?? '').replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();\nif (text.length < MIN_CHARS) {\n  return [{ json: { ...item, ok: false, httpStatus: 422, message: \"We couldn't find enough text at that link to summarize. It may be private, paywalled, or have no speech.\" } }];\n}\n\nconst wordCount = text.split(/\\s+/).filter(Boolean).length;\nreturn [{ json: { ...item, ok: true, text: text.slice(0, MAX_CHARS), truncated: text.length > MAX_CHARS, wordCount } }];"
+      }
+    },
+    {
+      "id": "n-has-text",
+      "name": "Has Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1584,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c-ok",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n-summarize",
+      "name": "Summarize",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "position": [
+        1824,
+        224
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Source type: {{ $json.platform }} ({{ $json.method }})\nURL: {{ $json.sourceUrl }}\nOriginal title: {{ $json.title || 'unknown' }}\n\n<content>\n{{ $json.text }}\n</content>",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an expert editor who writes digests of articles and video transcripts.\n\nRules:\n- Use only information present in the content. Do not invent facts, numbers, names, or quotes.\n- Write title, summary, and keyTakeaways in the same language as the content.\n- title: concise and informative (keep the original title if it is good).\n- summary: 2-4 short paragraphs of plain text separated by blank lines.\n- keyTakeaways: 3-7 specific, standalone points.\n- tags: 3-8 short lowercase topic tags in English, without '#'.\n- category: exactly one of Technology, Business, Science, Health, Politics, Education, Entertainment, Lifestyle, Sports, Other.\n- language: ISO 639-1 code of the content.\n\nTranscripts may lack punctuation or contain speech-recognition errors; infer the intended meaning sensibly."
+            }
+          ]
+        },
+        "batching": {},
+        "needsFallback": true
+      }
+    },
+    {
+      "id": "n-gemini-model",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1792,
+        448
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "n-parser",
+      "name": "Digest Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1952,
+        448
+      ],
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": { \"type\": \"string\" },\n    \"summary\": { \"type\": \"string\" },\n    \"keyTakeaways\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"tags\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"category\": { \"type\": \"string\", \"enum\": [\"Technology\", \"Business\", \"Science\", \"Health\", \"Politics\", \"Education\", \"Entertainment\", \"Lifestyle\", \"Sports\", \"Other\"] },\n    \"language\": { \"type\": \"string\" }\n  },\n  \"required\": [\"title\", \"summary\", \"keyTakeaways\", \"tags\", \"category\", \"language\"]\n}",
+        "autoFix": true
+      }
+    },
+    {
+      "id": "n-build",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        144
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json.output ?? {};\nconst src = $('Check Content').first().json;\nconst tags = (d.tags ?? []).map(t => String(t).toLowerCase().replace(/^#/, '').trim()).filter(Boolean);\n\nreturn [{ json: {\n  id: $execution.id,\n  status: 'ok',\n  type: 'text',\n  url: src.sourceUrl,\n  data: {\n    title: d.title || src.title || '',\n    summary: d.summary ?? '',\n    keyTakeaways: d.keyTakeaways ?? [],\n    tags,\n    category: d.category ?? 'Other',\n    language: d.language || src.language || '',\n    source: { platform: src.platform, method: src.method, truncated: src.truncated ?? false },\n    wordCount: src.wordCount,\n  },\n} }];"
+      }
+    },
+    {
+      "id": "n-respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2320,
+        144
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "n-respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2320,
+        464
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: $json.message || ($json.error ? 'The AI summarizer failed. Please try again.' : 'Something went wrong.') }) }}",
+        "options": {
+          "responseCode": "={{ $json.httpStatus || 500 }}"
+        }
+      }
+    },
+    {
+      "id": "n-gemini-fallback",
+      "name": "Gemini Fallback Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1620,
+        560
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "id": "n-history-row",
+      "name": "Prepare History Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2540,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Runs after the webhook has already responded, for both success and error paths.\nconst j = $input.first().json;\nconst requestId = String($execution.id);\n\nif (j.status === 'ok') {\n  const d = j.data;\n  return [{ json: {\n    requestId,\n    status: 'ok',\n    url: j.url,\n    platform: d.source.platform,\n    method: d.source.method,\n    title: d.title,\n    category: d.category,\n    tags: d.tags.join(', '),\n    summary: d.summary,\n    keyTakeaways: JSON.stringify(d.keyTakeaways),\n    language: d.language,\n    wordCount: d.wordCount,\n    httpStatus: 200,\n    errorMessage: '',\n  } }];\n}\n\nconst body = $('Webhook').first().json.body ?? {};\nconst rawError = j.message || (typeof j.error === 'string' ? j.error : j.error?.message) || 'Unknown error';\nreturn [{ json: {\n  requestId,\n  status: 'error',\n  url: String(j.sourceUrl ?? body.url ?? '').slice(0, 2000),\n  platform: j.platform ?? '',\n  method: j.method ?? '',\n  title: j.title ?? '',\n  category: '',\n  tags: '',\n  summary: '',\n  keyTakeaways: '[]',\n  language: '',\n  wordCount: j.wordCount ?? 0,\n  httpStatus: j.httpStatus ?? 500,\n  errorMessage: String(rawError).slice(0, 1000),\n} }];"
+      }
+    },
+    {
+      "id": "n-save-history",
+      "name": "Save to History",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "onError": "continueRegularOutput",
+      "position": [
+        2760,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "xJw1NgfPUmcIKZfZ"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify URL": {
+      "main": [
+        [
+          {
+            "node": "Route by Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Source": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supadata Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gemini Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Jina Reader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supadata Transcript": {
+      "main": [
+        [
+          {
+            "node": "Parse Supadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Supadata": {
+      "main": [
+        [
+          {
+            "node": "Job Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Pending?": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s": {
+      "main": [
+        [
+          {
+            "node": "Supadata Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supadata Job Status": {
+      "main": [
+        [
+          {
+            "node": "Parse Supadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Transcribe": {
+      "main": [
+        [
+          {
+            "node": "Parse Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Transcription": {
+      "main": [
+        [
+          {
+            "node": "Check Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jina Reader": {
+      "main": [
+        [
+          {
+            "node": "Parse Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Article": {
+      "main": [
+        [
+          {
+            "node": "Check Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Content": {
+      "main": [
+        [
+          {
+            "node": "Has Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Text?": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarize",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Digest Parser",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Summarize",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Fallback Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarize",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Respond OK": {
+      "main": [
+        [
+          {
+            "node": "Prepare History Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Error": {
+      "main": [
+        [
+          {
+            "node": "Prepare History Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare History Row": {
+      "main": [
+        [
+          {
+            "node": "Save to History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 300,
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
